@@ -9,6 +9,26 @@ which can be caught by the controller who runs this as a subprocess.
 
 @author: Mario
 """
+
+class InputGraph:
+    
+    def __init__(self, inputdict: dict):
+        self.vertices = list(inputdict.keys())
+        self.vertices.sort()
+        self.vertices = tuple(self.vertices)
+        self.goal = None
+        self.succ = list(frozenset(self.vertices.index(x) for x in inputdict[self.vertices[i]]) for i in range(len(self.vertices)))
+        self.pred = list(frozenset(i for i in range(len(self.vertices)) if j in self.succ[i]) for j in range(len(self.vertices)))
+    
+    def setgoal(self, goal) -> None:
+        assert goal is None or goal in self.vertices
+        if goal is None:
+            self.goal = None
+        else:
+            self.goal = self.vertices.index(goal)
+        return None
+
+
 if __name__ == '__main__':
     from interface import Instructions
     
@@ -43,26 +63,8 @@ if __name__ == '__main__':
                 line = line.strip()
         return V
     
-    class InputGraph:
-        
-        def __init__(self, inputdict: dict):
-            self.vertices = list(inputdict.keys())
-            self.vertices.sort()
-            self.vertices = tuple(self.vertices)
-            self.goal = None
-            self.succ = list(frozenset(self.vertices.index(x) for x in inputdict[self.vertices[i]]) for i in range(len(self.vertices)))
-            self.pred = list(frozenset(i for i in range(len(self.vertices)) if j in self.succ[i]) for j in range(len(self.vertices)))
-        
-        def setgoal(self, goal) -> None:
-            assert goal is None or goal in self.vertices
-            if goal is None:
-                self.goal = None
-            else:
-                self.goal = self.vertices.index(goal)
-            return None
-    
     inputgraph = InputGraph(dict_from_graphml())
     if instructions.has_goal:
         inputgraph.setgoal(instructions.goal)
     
-    print(inputgraph.vertices)
+    print(inputgraph.succ)
