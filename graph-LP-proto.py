@@ -10,6 +10,8 @@ from scipy.sparse import dok_array
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 import networkx as nx
+from time import monotonic
+from itertools import permutations
 
 
 class Graph:
@@ -280,6 +282,7 @@ def LP_master(inputgraph:nx.Graph|nx.DiGraph, directed:int, bisect:bool, flow:bo
         The upper constraints are added (vertex bound), since they are neither strictly
         stronger nor weaker than the fused version.
         This is always an improvement and efficient, False is only supported for comparison.
+        Must be true to admit directed=2.
     flow : bool
         Whether to augment the model with flow variables and constraints.
         These ensure global connectivity and are necessary to distinguish back chords.
@@ -298,6 +301,7 @@ def LP_master(inputgraph:nx.Graph|nx.DiGraph, directed:int, bisect:bool, flow:bo
         nonzero variables in the solution, function value in the solution.
 
     """
+    time0, time1 = monotonic(), monotonic()
     # unifying start and target lists and validating input
     sta : list
     if start is None:
@@ -327,6 +331,8 @@ def LP_master(inputgraph:nx.Graph|nx.DiGraph, directed:int, bisect:bool, flow:bo
             break
     assert connected
     del connected
+    time0, time1 = time1, monotonic()
+    print("connectivity check:", time1-time0)
     graph : nx.DiGraph | nx.Graph
     # building cliques. in the directed case, only pairwise biconnected counts.
     if clint == 1:
@@ -339,6 +345,8 @@ def LP_master(inputgraph:nx.Graph|nx.DiGraph, directed:int, bisect:bool, flow:bo
         #print(cliques)
         if directed:
             del ug
+        time0, time1 = time1, monotonic()
+        print("clique check:", time1-time0)
     if not directed:
         if type(inputgraph) == nx.DiGraph:
             if clint != 1:
@@ -357,42 +365,115 @@ def LP_master(inputgraph:nx.Graph|nx.DiGraph, directed:int, bisect:bool, flow:bo
             graph = inputgraph.copy()
     assert (not directed and type(graph) == nx.Graph) or (directed and type(graph) == nx.DiGraph)
     V = sorted(graph.nodes)
+    E = sorted(graph.edges)
+    Esym = list(set(tuple(sorted(e)) for e in E))
+    time0, time1 = time1, monotonic()
+    print("graph type casting & node list sorting", time1-time0)
     # now let's build the variable list alongside integrality and objective.
-    vari, integ, objective = list(), list(), list()
-    ns, nt, nn, ne = len(sta), len(tar), len(graph), len(graph.edges)
-    vari += [("s", s) for s in sta] + [("t", t) for t in tar] + [("y", v) for v in graph] + [("x", e) for e in graph.edges]
-    integ += [0,]*(ns+nt) + [1,]*nn + [0,]*ne
+    vari, integ, objective, varid = list(), list(), list(), dict()
+    ns, nt, nn, ne, nv, nes = len(sta), len(tar), len(graph), len(graph.edges), 0, len(Esym)
+    for s in sta:
+        variable = ("s", s)
+        varid[variable] = nv
+        vari.append(variable)
+        nv += 1
+    for t in tar:
+        variable = ("t", t)
+        varid[variable] = nv
+        vari.append(variable)
+        nv += 1
+    for v in V:
+        variable = ("y", v)
+        varid[variable] = nv
+        vari.append(variable)
+        nv += 1
+    for e in E:
+        variable = ("x", e)
+        varid[variable] = nv
+        vari.append(variable)
+        nv += 1
+    integ += [0,]*(ns+nt) + [clint==2,]*nn + [0,]*ne
     objective += [0,]*(ns+nt+nn) + [-1,]*ne
     if flow:
         pass
-    nv = len(vari)
+    time0, time1 = time1, monotonic()
+    print("variable, objective, integrality initialization", time1-time0)
     # ==== now we build constraints ====
     cons = list()
     # start and end
     A = dok_array((2,nv),dtype=np.uint8)
-    for i in range(nv):
-        if vari[i][0] == "s":
-            A[0,i] = 1
-        elif vari[i][0] == "t":
-            A[1,i] = 1
+    for v in sta:
+        A[0,varid[("s", v)]] = 1
+    for v in tar:
+        A[1,varid[("t", v)]] = 1
     cons.append(LinearConstraint(A, lb=1, ub=1))
+    time0, time1 = time1, monotonic()
+    print("start+end constraints", time1-time0)
     # coupling node and edge variables
     A = dok_array(((1+bool(directed))*nn,nv), dtype=np.int8)
     for i in range(nn):
         if V[i] in tar:
-            A[i, vari.index(("t",V[i]))] = 1
+            A[i, varid[("t",V[i])]] = 1
         if V[i] in sta:
-            A[i+bool(directed)*nn, vari.index(("s", V[i]))] = 1
+            A[i+bool(directed)*nn, varid[("s", V[i])]] = 1
         for e in graph.edges(V[i]):
-            A[i,vari.index(("x", tuple(sorted(e))))] = 1
+            A[i,varid[("x", (tuple(sorted(e)), e)[bool(directed)])]] = 1
         if directed:
             for e in graph.in_edges(V[i]):
-                A[nn+i, vari.index(("x", e))] = 1
-        A[i, vari.index(("y",V[i]))] = -(1 + int(not bool(directed)))
+                A[nn+i, varid[("x", e)]] = 1
+        A[i, varid[("y",V[i])]] = -(1 + int(not bool(directed)))
         if directed:
-            A[nn+i, vari.index(("y", V[i]))] = -1
-    #print(A)
+            A[nn+i, varid[("y", V[i])]] = -1
     cons.append(LinearConstraint(A,lb=0,ub=0))
+    time0, time1 = time1, monotonic()
+    print("coupling node & edge variables", time1-time0)
+    # upper edge constraint
+    assert (bisect and flow) or directed<2
+    if directed<2:
+        A = dok_array((nes,nv), dtype=np.int8)
+        for i in range(nes):
+            A[i, varid[("y", Esym[i][0])]] = 1
+            A[i, varid[("y", Esym[i][1])]] = 1
+            if ("x", Esym[i]) in varid:
+                A[i, varid[("x", Esym[i])]] = -1
+            if ("x", (Esym[i][1], Esym[i][0])) in varid:
+                A[i, varid[("x", (Esym[i][1], Esym[i][0]))]] = -1
+        cons.append(LinearConstraint(A,lb=-np.inf, ub=1))
+        time0, time1 = time1, monotonic()
+        print("fused upper edge constraint", time1-time0)
+    # lower edge constraint
+    A = dok_array((nes*(1+int(bisect)),nv), dtype=np.int8)
+    for i in range(nes):
+        A[i, varid[("y", Esym[i][0])]] = 1
+        A[i+int(bisect)*nes, varid[("y", Esym[i][1])]] = 1
+        if ("x", Esym[i]) in varid:
+            A[i, varid[("x", Esym[i])]] = -(2-int(bisect))
+            if bisect:
+                A[nes+i, varid[("x", Esym[i])]] = -1
+        if ("x", (Esym[i][1], Esym[i][0])) in varid:
+            A[i, varid[("x", (Esym[i][1], Esym[i][0]))]] = -(2-int(bisect))
+            if bisect:
+                A[nes+i, varid[("x", (Esym[i][1], Esym[i][0]))]] = -1
+    cons.append(LinearConstraint(A,lb=0,ub=np.inf))
+    time0, time1 = time1, monotonic()
+    print("lower edge constraint", time1-time0)
+    # clique constraints
+    if clint == 1:
+        nc = len(cliques)
+        A = dok_array((nc*(1+int(bisect)),nv), dtype=np.uint8)
+        for i in range(nc):
+            for e in permutations(cliques[i], r=2):
+                if ("x", e) in varid:
+                    A[i, varid[("x", e)]] = 1
+            if bisect:
+                for v in cliques[i]:
+                    A[nc+i, varid[("y", v)]] = 1
+        ubu = [1,]*nc
+        if bisect:
+            ubu += [2,]*nc
+        cons.append(LinearConstraint(A,lb=-np.inf, ub=ubu))
+        time0, time1 = time1, monotonic()
+        print("clique constraints", time1-time0)
     pass
     # ===== finally solve the problem and return the result
     bnds : Bounds
@@ -404,7 +485,11 @@ def LP_master(inputgraph:nx.Graph|nx.DiGraph, directed:int, bisect:bool, flow:bo
             if vari[i][0] == "y":
                 ubn[i]=np.inf
         bnds = Bounds(lb=0, ub=ubn)
+    time0, time1 = time1, monotonic()
+    print("constructing variable bounds", time1-time0)
     res = milp(objective, integrality=integ, bounds=bnds, constraints=cons)
+    time0, time1 = time1, monotonic()
+    print("solving the LP", time1-time0)
     assert res.success
     return list((vari[i],res.x[i]) for i in range(nv) if res.x[i]>1e-6), -res.fun
 
@@ -430,20 +515,32 @@ def degree_sequence_ub(graph:nx.Graph):
             ds = ds[:-1]
     return used_nodes -1
 
-def plotgrid(m, n=None,start=None,end=None, solver=LP_base):
-    g = Graph(grid(m,(n,m)[n is None]))
-    res = solver(g,start,end)[0]
-    b = list(res.keys())
-    while type(b[0][0]) == int:
-        b.pop(0)
-    c = list(str(min(1.0,max(0.0,1.0-res[x]))) for x in b)
-    print(res)
-    lc = LineCollection(b,colors=c, linewidth=2)
+def plotgrid(res):
+    b = res.copy()
+    xmax = 0
+    ymax = 0
+    for v in b.copy():
+        if v[0][0] != 'x':
+            b.remove(v)
+            xmax = max(xmax, v[0][1][0])
+            ymax = max(ymax, v[0][1][1])
+    c = list(str(min(1.0,max(0.0,1.0-b[i][1]))) for i in range(len(b)))
+    #print(b)
+    #print(c)
+    lc = LineCollection(list(x[0][1] for x in b),colors=c, linewidth=2)
     fig,ax = plt.subplots()
-    ax.set_xlim(-1,m)
-    ax.set_ylim(-1,(n,m)[n is None])
+    ax.set_xlim(0,xmax)
+    ax.set_ylim(0,ymax)
     ax.add_collection(lc)
+    plt.xticks(range(xmax+1))
+    plt.yticks(range(ymax+1))
+    plt.grid()
     plt.show()
     return None
 
-print(*LP_master(nx.gnp_random_graph(10, 0.2, seed=42), 1, True, False, 0), sep="\n")
+tgrid = nx.grid_2d_graph(13,9)
+res = LP_master(tgrid, 0, True, False, 1)
+print(res[1])
+plotgrid(res[0])
+#print(LP_master(nx.gnp_random_graph(50, 0.2, seed=42), 0, True, False, 2)[1])
+disexample = nx.from_dict_of_lists({0:[1,],1:[0,2,3],2:[1,],3:[1,],4:[5,],5:[4,]})
