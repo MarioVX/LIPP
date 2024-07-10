@@ -462,7 +462,9 @@ def deg_seq_ub(graph:nx.Graph) -> int:
         ds.pop()
     if not ds:
         return used_nodes
-    starting_un = used_nodes
+    if len(ds) == 1:
+        return used_nodes
+    starting_un = 0
     starting_ds = ds.copy()
     while len(starting_ds) > 1:
         starting_ds[0] -= starting_ds[-1] - 2
@@ -471,12 +473,10 @@ def deg_seq_ub(graph:nx.Graph) -> int:
         if len(starting_ds) > 1 and starting_ds[0] <= 0:
             starting_ds[1] += starting_ds[0]
             starting_ds.pop(0)
-    starting_un -= 1
-    starting_un -= used_nodes
     # print("starting used nodes:", starting_un)
     del starting_ds
     used_nodes += len(ds)
-    for x in range(len(ds)-starting_un, len(ds)+1):
+    for x in range(max(1,len(ds)-starting_un), len(ds)+1):
         # print("x =",x)
         reserved, using = ds[:x], ds[x:]
         while using:
@@ -492,6 +492,7 @@ def deg_seq_ub(graph:nx.Graph) -> int:
         if using:
             continue
         return used_nodes - x
+    print("ds failed on graph:",str(nx.to_dict_of_lists(graph)),"; starting_un:",starting_un,"; remaining ds:",ds)
     assert False
 
 def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
@@ -723,7 +724,7 @@ def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
                     upper_bound += deg_seq_ub(dg.to_undirected())
             case "fLP":
                 if settings["dec"] == 0:
-                    upper_bound += int(1e-6 + LP_master(wg, 0, True, False, 1, start=present))
+                    upper_bound += int(1e-6 + LP_master(wg, 1, True, False, 1, start=present))
                 else:
                     upper_bound += int(1e-6 + LP_master(dg, 1, True, False, 1, start=present))
             case "pLP":
