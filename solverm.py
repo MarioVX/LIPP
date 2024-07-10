@@ -445,6 +445,55 @@ def LP_master(inputgraph:nx.Graph|nx.DiGraph, directed:int, bisect:bool, flow:bo
     assert res.success
     return -res.fun
 
+def deg_seq_ub(graph:nx.Graph) -> int:
+    ds = sorted([d for n, d in graph.degree()], reverse=True)
+    if not ds:
+        return 0
+    if not ds[0]:
+        return 1
+    while ds and ds[-1] == 0:
+        ds.pop()
+    used_nodes = 0
+    while ds and ds[-1] == 1 and used_nodes < 2:
+        used_nodes += 1
+        ds.pop()
+    while ds and ds[-1] == 2:
+        used_nodes += 1
+        ds.pop()
+    if not ds:
+        return used_nodes
+    starting_un = used_nodes
+    starting_ds = ds.copy()
+    while len(starting_ds) > 1:
+        starting_ds[0] -= starting_ds[-1] - 2
+        starting_un += 1
+        starting_ds.pop()
+        if len(starting_ds) > 1 and starting_ds[0] <= 0:
+            starting_ds[1] += starting_ds[0]
+            starting_ds.pop(0)
+    starting_un -= 1
+    starting_un -= used_nodes
+    # print("starting used nodes:", starting_un)
+    del starting_ds
+    used_nodes += len(ds)
+    for x in range(len(ds)-starting_un, len(ds)+1):
+        # print("x =",x)
+        reserved, using = ds[:x], ds[x:]
+        while using:
+            y = using.pop()
+            if len(reserved) < y - 2:
+                using.append(0)
+                break
+            for z in reserved[:y-2]:
+                z -= 1
+            reserved.sort(reverse=True)
+            while not reserved[-1]:
+                reserved.pop()
+        if using:
+            continue
+        return used_nodes - x
+    assert False
+
 def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
     use_supercomp = "supercomp" in settings and settings["supercomp"]
     iso_upto = "iso" in settings and settings["iso"]
@@ -579,7 +628,7 @@ def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
                 comp_target = boundary_map[line[1]][0]
             line_weight = int(1e-6 + LP_master(nx.induced_subgraph(dg, node_map[comp]), 1, True, False, 1, cutsets=(internal_cuts[comp], [])[type(line[1][1])==tuple], start=comp_start, target=comp_target))
             lg.add_edge(line[0], line[1], weight=line_weight)
-        # B&B trim - WEITER GEHTS!
+        # B&B trim
         changed = True
         while changed:
             changed = False
@@ -828,6 +877,6 @@ def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
     return out, searchnodes, solvetime
 
 karate_paths = [('12', '3', '2', '28', '31', '25', '23', '29', '26'), ('16', '5', '0', '1', '30', '32', '23', '25', '24'), ('16', '5', '0', '1', '30', '32', '23', '27', '24'), ('16', '5', '0', '1', '30', '33', '23', '25', '24'), ('16', '5', '0', '1', '30', '33', '27', '24', '25'), ('16', '5', '0', '2', '28', '33', '23', '25', '24'), ('16', '5', '0', '2', '9', '33', '23', '25', '24'), ('16', '5', '0', '31', '24', '27', '23', '29', '26'), ('16', '6', '0', '1', '30', '32', '23', '25', '24'), ('16', '6', '0', '1', '30', '32', '23', '27', '24'), ('16', '6', '0', '1', '30', '33', '23', '25', '24'), ('16', '6', '0', '1', '30', '33', '27', '24', '25'), ('16', '6', '0', '2', '28', '33', '23', '25', '24'), ('16', '6', '0', '2', '9', '33', '23', '25', '24'), ('16', '6', '0', '31', '24', '27', '23', '29', '26'), ('17', '1', '2', '28', '31', '25', '23', '29', '26'), ('19', '1', '2', '28', '31', '25', '23', '29', '26'), ('21', '1', '2', '28', '31', '25', '23', '29', '26'), ('24', '25', '23', '32', '30', '1', '0', '5', '16'), ('24', '25', '23', '32', '30', '1', '0', '6', '16'), ('24', '25', '23', '33', '28', '2', '0', '5', '16'), ('24', '25', '23', '33', '28', '2', '0', '6', '16'), ('24', '25', '23', '33', '30', '1', '0', '5', '16'), ('24', '25', '23', '33', '30', '1', '0', '6', '16'), ('24', '25', '23', '33', '9', '2', '0', '5', '16'), ('24', '25', '23', '33', '9', '2', '0', '6', '16'), ('24', '27', '23', '32', '30', '1', '0', '5', '16'), ('24', '27', '23', '32', '30', '1', '0', '6', '16'), ('25', '24', '27', '33', '30', '1', '0', '5', '16'), ('25', '24', '27', '33', '30', '1', '0', '6', '16'), ('26', '29', '23', '25', '31', '28', '2', '1', '17'), ('26', '29', '23', '25', '31', '28', '2', '1', '19'), ('26', '29', '23', '25', '31', '28', '2', '1', '21'), ('26', '29', '23', '25', '31', '28', '2', '1', '30'), ('26', '29', '23', '25', '31', '28', '2', '3', '12'), ('26', '29', '23', '25', '31', '28', '2', '8', '30'), ('26', '29', '23', '27', '24', '31', '0', '1', '30'), ('26', '29', '23', '27', '24', '31', '0', '5', '16'), ('26', '29', '23', '27', '24', '31', '0', '6', '16'), ('26', '29', '23', '27', '24', '31', '0', '8', '30'), ('30', '1', '0', '31', '24', '27', '23', '29', '26'), ('30', '1', '2', '28', '31', '25', '23', '29', '26'), ('30', '8', '0', '31', '24', '27', '23', '29', '26'), ('30', '8', '2', '28', '31', '25', '23', '29', '26')]
-res = solve(nx.read_graphml("graphs/lip_crn/karate.graphml"), settings={"iso":1, "supercomp":1})
-assert res[0] == karate_paths
-print(res[1], res[2])
+#res = solve(nx.read_graphml("graphs/lip_crn/karate.graphml"), settings={"iso":1, "supercomp":1})
+#assert res[0] == karate_paths
+#print(res[1], res[2])

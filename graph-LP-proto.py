@@ -638,6 +638,55 @@ def degree_sequence_ub(graph:nx.Graph):
             ds = ds[:-1]
     return used_nodes -1
 
+def deg_seq_2(graph:nx.Graph) -> int:
+    ds = sorted([d for n, d in graph.degree()], reverse=True)
+    if not ds:
+        return 0
+    if not ds[0]:
+        return 1
+    while ds and ds[-1] == 0:
+        ds.pop()
+    used_nodes = 0
+    while ds and ds[-1] == 1 and used_nodes < 2:
+        used_nodes += 1
+        ds.pop()
+    while ds and ds[-1] == 2:
+        used_nodes += 1
+        ds.pop()
+    if not ds:
+        return used_nodes
+    starting_un = used_nodes
+    starting_ds = ds.copy()
+    while len(starting_ds) > 1:
+        starting_ds[0] -= starting_ds[-1] - 2
+        starting_un += 1
+        starting_ds.pop()
+        if len(starting_ds) > 1 and starting_ds[0] <= 0:
+            starting_ds[1] += starting_ds[0]
+            starting_ds.pop(0)
+    starting_un -= 1
+    starting_un -= used_nodes
+    # print("starting used nodes:", starting_un)
+    del starting_ds
+    used_nodes += len(ds)
+    for x in range(len(ds)-starting_un, len(ds)+1):
+        # print("x =",x)
+        reserved, using = ds[:x], ds[x:]
+        while using:
+            y = using.pop()
+            if len(reserved) < y - 2:
+                using.append(0)
+                break
+            for z in reserved[:y-2]:
+                z -= 1
+            reserved.sort(reverse=True)
+            while not reserved[-1]:
+                reserved.pop()
+        if using:
+            continue
+        return used_nodes - x
+    assert False
+
 def plotgrid(res):
     b = res.copy()
     xmax = 0
@@ -672,9 +721,9 @@ def find_discrepancy(generator):
                 print(yi)
                 yield graph
 
-tgrid = nx.grid_2d_graph(3,4)
-res = LP_master(tgrid, 1, True, False, 1)
-print(res[1])
-plotgrid(res[0])
+#tgrid = nx.grid_2d_graph(3,4)
+#res = LP_master(tgrid, 1, True, False, 1)
+#print(res[1])
+#plotgrid(res[0])
 #print(LP_master(nx.grid_2d_graph(3,3), 1, True, True, 1)[1])
 #disexample = nx.from_dict_of_lists({0:[1,],1:[0,2,3],2:[1,],3:[1,],4:[5,],5:[4,]})
