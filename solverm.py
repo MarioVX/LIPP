@@ -495,8 +495,22 @@ def deg_seq_ub(graph:nx.Graph) -> int:
     assert False
 
 def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
-    use_supercomp = "supercomp" in settings and settings["supercomp"]
-    iso_upto = "iso" in settings and settings["iso"]
+    assert "sup" in settings
+    use_supercomp = settings["sup"]
+    assert "iso" in settings
+    iso_upto = settings["iso"]
+    assert "ub" in settings
+    # "trivial" - len(F)
+    # "ds" - degree sequence
+    # "fLP" - flat LP. this gets overwritten to pLP if decomposition is done
+    # "pLP" - flat LP on pointed graph
+    # if a decomposition is done, the min with longest path from decomp is taken
+    assert "dec" in settings and settings["dec"] in range(3)
+    # 0 - no decomposition at all
+    # 1 - do the condensation and contraction, compute node weights with ds
+    # 2 - also take its line graph, compute line weights with LP
+    assert "bbt" in settings
+    assert (not settings["bbt"]) or settings["dec"] > 0
     inputnodenames = sorted(inputgraph.nodes)
     numinputnodes = len(inputnodenames)
     ig : nx.Graph = nx.relabel_nodes(inputgraph, dict(((inputnodenames[i], i) for i in range(numinputnodes))))
@@ -516,197 +530,221 @@ def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
             heappush(queue, (-((numinputnodes+1)*(past+1)+past), (past, present, int_from_set(wg.nodes), parent)))
             return None
         # point
-        dg = wg.to_directed()
-        for n in wg.neighbors(present):
-            dg.remove_edge(n, present)
-        changed = True
-        while changed:
-            changed = False
-            for e in tuple(dg.edges):
-                dg2 = nx.induced_subgraph(dg, {e[0],}|(set(dg.nodes)-set(wg.neighbors(e[1]))))
-                if present not in dg2.nodes or not nx.has_path(dg2, present, e[0]):
-                    dg.remove_edges_from((e,))
-                    changed = True
-        del wg
-        con : nx.DiGraph = nx.condensation(dg)
-        node_map = dict((v,set(con.nodes[v]['members'])) for v in con.nodes)
-        in_node_map = con.graph['mapping'].copy()
-        edge_map = dict((e,set()) for e in con.edges)
-        con_edge_set = set(con.edges)
-        for e in dg.edges:
-            ce = (in_node_map[e[0]], in_node_map[e[1]])
-            if ce in con_edge_set:
-                edge_map[ce].add(e)
-        del in_node_map, con_edge_set
-        internal_cuts = dict((v,list()) for v in con.nodes)
-        changed = True
-        while changed:
-            changed = False
-            for ce in tuple(con.edges):
-                if con.out_degree(ce[0]) == 1 and con.in_degree(ce[1]) == 1:
-                    nx.contracted_edge(con, ce, self_loops=False, copy=False)
-                    node_map[ce[0]] |= node_map[ce[1]]
-                    internal_cuts[ce[0]].append(edge_map[ce])
-                    internal_cuts[ce[0]] += internal_cuts[ce[1]]
-                    del node_map[ce[1]]
-                    del edge_map[ce]
-                    del internal_cuts[ce[1]]
-                    for e in tuple(edge_map.keys()):
-                        if e[0] == ce[1]:
-                            edge_map[(ce[0],e[1])] = edge_map[e]
-                            del edge_map[e]
-                    changed = True
-                    break
-        boundary_map = dict()
-        for ce in edge_map:
-            boundary_map[ce] = (set(e[0] for e in edge_map[ce]), set(e[1] for e in edge_map[ce]))
-        starting_comp : int
-        for comp in con.nodes:
-            if present in node_map[comp]:
-                starting_comp = comp
-                break
-        # at this point, boundary_map : (c0, c1) -> (set[exits of c0], set[entries of c1])
-        # edge_map : (c0, c1) -> set[edges crossing from c0 to c1]
-        # node_map : c -> contained vertices
-        # internal_cuts : c -> list[set[tuple[int,int]]]
-        lg = con.copy()
-        ls : tuple[tuple[str,int],int]
-        for c in con.nodes:
-            lg.add_node(("end",c))
-            lg.add_edge(c, ("end", c))
-            if present in node_map[c]:
-                lg.add_node(("start",c))
-                lg.add_edge(("start",c), c)
-                ls = (("start",c),c)
-        lg : nx.DiGraph = nx.line_graph(lg)
-        # nodes of this line graph have the form (c0, c1)
-        # edges of this line graph have the form ((c0,c1),(c1,c2))
-        # this allows computing an edge weight LP by restricting node set to c1,
-        # start set to the boundary of c1 against c0,
-        # and target set to the boundary of c1 against c2.
-        # in the special cases where c0 = ("start", c), start is restricted to present,
-        # and where c2 = ("end", c), target set is open.
-        lines_from_comp : dict[int, list[tuple]] = dict()
-        for line in lg.edges:
-            assert line[0][1] in con.nodes
-            if line[0][1] not in lines_from_comp:
-                lines_from_comp[line[0][1]] = list()
-            lines_from_comp[line[0][1]].append(line)
-        linenodes_from_comp : dict[int, list[tuple[int,int]]] = dict()
-        for linenode in lg.nodes:
-            if type(linenode[0]) == tuple:
-                assert linenode[0][1] in con.nodes
-                if linenode[0][1] not in linenodes_from_comp:
-                    linenodes_from_comp[linenode[0][1]] = list()
-                linenodes_from_comp[linenode[0][1]].append(linenode)
-            else:
-                assert linenode[0] in con.nodes
-                if linenode[0] not in linenodes_from_comp:
-                    linenodes_from_comp[linenode[0]] = list()
-                linenodes_from_comp[linenode[0]].append(linenode)
-            if type(linenode[1]) == tuple:
-                assert linenode[1][1] in con.nodes
-                if linenode[1][1] not in linenodes_from_comp:
-                    linenodes_from_comp[linenode[1][1]] = list()
-                linenodes_from_comp[linenode[1][1]].append(linenode)
-            else:
-                assert linenode[1] in con.nodes
-                if linenode[1] not in linenodes_from_comp:
-                    linenodes_from_comp[linenode[1]] = list()
-                linenodes_from_comp[linenode[1]].append(linenode)
-        # compute the component LPs and assign weight
-        for line in tuple(lg.edges):
-            comp = line[0][1]
-            assert comp == line[1][0]
-            if type(line[0][0]) == tuple:
-                comp_start = present
-            else:
-                comp_start = boundary_map[line[0]][1]
-            if type(line[1][1]) == tuple:
-                comp_target = None
-            else:
-                comp_target = boundary_map[line[1]][0]
-            line_weight = int(1e-6 + LP_master(nx.induced_subgraph(dg, node_map[comp]), 1, True, False, 1, cutsets=(internal_cuts[comp], [])[type(line[1][1])==tuple], start=comp_start, target=comp_target))
-            lg.add_edge(line[0], line[1], weight=line_weight)
-        # B&B trim
-        changed = True
-        while changed:
-            changed = False
-            for comp in con.nodes:
-                if comp == starting_comp:
-                    continue
-                # compute an upper bound WITH the component
-                ub_with : int
-                entering_edges = set()
-                for ce in con.in_edges(comp):
-                    entering_edges |= edge_map[ce]
-                con_with = nx.induced_subgraph(con, {comp,}|set(nx.descendants(con, comp))|set(nx.ancestors(con, comp)))
-                lg_with = lg.copy()
-                dg_with = dg.copy()
-                for comp1 in set(con.nodes)-set(con_with.nodes):
-                    dg_with.remove_nodes_from(node_map[comp1])
-                    lg_with.remove_nodes_from(linenodes_from_comp[comp1])
-                # flat computation
-                ub_with = past + int(1e-6 + LP_master(dg_with, 1, True, False, 1, cutsets=[entering_edges,], start=present))
-                # decomposed computation: longest weighted path in lg_with
-                longest_from : dict[int,int] = dict()
-                decomp_max = 0
-                for v in reversed(list(nx.topological_sort(lg_with))):
-                    longest_from[v] = max((longest_from[s]+lg_with.edges[(v,s)]['weight'] for s in lg_with.successors(v)), default=0)
-                    if type(v[0]) == tuple:
-                        assert v[0][0] == "start"
-                        decomp_max = max(decomp_max, longest_from[v])
-                decomp_max += past
-                #print("check component",comp,": flat =",ub_with,", decomp =",decomp_max)
-                ub_with = min(ub_with, decomp_max)
-                # attempt greedy solve WITHOUT the component
-                lb_without = past + 1
-                con_without = nx.induced_subgraph(con, nx.node_connected_component(nx.induced_subgraph(con, set(con.nodes)-{comp,}).to_undirected(reciprocal=False, as_view=True), starting_comp)).copy()
-                #lg_without = lg.copy()
-                dg_without : nx.DiGraph = dg.copy()
-                for comp1 in set(con.nodes)-set(con_without.nodes):
-                    dg_without.remove_nodes_from(node_map[comp1])
-                    #lg_without.remove_nodes_from(linenodes_from_comp[comp1])
-                start_without = present
-                ub_without = past + int(1e-6 + LP_master(dg_without, 1, True, False, 1, start=start_without))
-                while lb_without <= ub_with and ub_with < ub_without:
-                    ssu = set(dg_without.successors(start_without))
-                    if not ssu:
+        if settings["ub"]=="pLP" or settings["dec"]>0:
+            dg = wg.to_directed()
+            for n in wg.neighbors(present):
+                dg.remove_edge(n, present)
+            changed = True
+            while changed:
+                changed = False
+                for e in tuple(dg.edges):
+                    dg2 = nx.induced_subgraph(dg, {e[0],}|(set(dg.nodes)-set(wg.neighbors(e[1]))))
+                    if present not in dg2.nodes or not nx.has_path(dg2, present, e[0]):
+                        dg.remove_edges_from((e,))
+                        changed = True
+        if settings["dec"]>0:
+            con : nx.DiGraph = nx.condensation(dg)
+            node_map = dict((v,set(con.nodes[v]['members'])) for v in con.nodes)
+            in_node_map = con.graph['mapping'].copy()
+            edge_map = dict((e,set()) for e in con.edges)
+            con_edge_set = set(con.edges)
+            for e in dg.edges:
+                ce = (in_node_map[e[0]], in_node_map[e[1]])
+                if ce in con_edge_set:
+                    edge_map[ce].add(e)
+            del in_node_map, con_edge_set
+            internal_cuts = dict((v,list()) for v in con.nodes)
+            changed = True
+            while changed:
+                changed = False
+                for ce in tuple(con.edges):
+                    if con.out_degree(ce[0]) == 1 and con.in_degree(ce[1]) == 1:
+                        nx.contracted_edge(con, ce, self_loops=False, copy=False)
+                        node_map[ce[0]] |= node_map[ce[1]]
+                        internal_cuts[ce[0]].append(edge_map[ce])
+                        internal_cuts[ce[0]] += internal_cuts[ce[1]]
+                        del node_map[ce[1]]
+                        del edge_map[ce]
+                        del internal_cuts[ce[1]]
+                        for e in tuple(edge_map.keys()):
+                            if e[0] == ce[1]:
+                                edge_map[(ce[0],e[1])] = edge_map[e]
+                                del edge_map[e]
+                        changed = True
                         break
-                    sud : dict[int,tuple[int,nx.DiGraph]] = dict()
-                    for succ in ssu:
-                        dgwo2 = nx.induced_subgraph(dg_without, nx.node_connected_component(nx.induced_subgraph(dg_without.to_undirected(reciprocal=False, as_view=True), {succ,}|(set(dg_without.nodes)-(ssu|{start_without,}))), succ))
-                        ubwo2 = lb_without + LP_master(dgwo2, 1, True, False, 1, start=succ)
-                        sud[succ] = (ubwo2, dgwo2.copy())
-                    #print(sud.keys(), lb_without, ub_with, ub_without)
-                    start_without = max(sud, key= lambda x : sud[x][0])
-                    lb_without += 1
-                    dg_without = sud[start_without][1]
-                    ub_without = int(1e-6 + sud[start_without][0])
-                if lb_without > ub_with:
-                    # Mr. Trimmy McTrimTrim
-                    #print("trimmed these nodes:",*node_map[comp])
-                    con.remove_node(comp)
-                    dg.remove_nodes_from(node_map[comp])
-                    lg.remove_nodes_from(linenodes_from_comp[comp])
-                    changed = True
+            boundary_map = dict()
+            for ce in edge_map:
+                boundary_map[ce] = (set(e[0] for e in edge_map[ce]), set(e[1] for e in edge_map[ce]))
+            starting_comp : int
+            for comp in con.nodes:
+                if present in node_map[comp]:
+                    starting_comp = comp
                     break
+            # at this point, boundary_map : (c0, c1) -> (set[exits of c0], set[entries of c1])
+            # edge_map : (c0, c1) -> set[edges crossing from c0 to c1]
+            # node_map : c -> contained vertices
+            # internal_cuts : c -> list[set[tuple[int,int]]]
+            lg = con.copy()
+            ls : tuple[tuple[str,int],int]
+            for c in con.nodes:
+                lg.add_node(("end",c))
+                lg.add_edge(c, ("end", c))
+                if present in node_map[c]:
+                    lg.add_node(("start",c))
+                    lg.add_edge(("start",c), c)
+                    ls = (("start",c),c)
+            lg : nx.DiGraph = nx.line_graph(lg)
+            # nodes of this line graph have the form (c0, c1)
+            # edges of this line graph have the form ((c0,c1),(c1,c2))
+            # this allows computing an edge weight LP by restricting node set to c1,
+            # start set to the boundary of c1 against c0,
+            # and target set to the boundary of c1 against c2.
+            # in the special cases where c0 = ("start", c), start is restricted to present,
+            # and where c2 = ("end", c), target set is open.
+            lines_from_comp : dict[int, list[tuple]] = dict()
+            for line in lg.edges:
+                assert line[0][1] in con.nodes
+                if line[0][1] not in lines_from_comp:
+                    lines_from_comp[line[0][1]] = list()
+                lines_from_comp[line[0][1]].append(line)
+            linenodes_from_comp : dict[int, list[tuple[int,int]]] = dict()
+            for linenode in lg.nodes:
+                if type(linenode[0]) == tuple:
+                    assert linenode[0][1] in con.nodes
+                    if linenode[0][1] not in linenodes_from_comp:
+                        linenodes_from_comp[linenode[0][1]] = list()
+                    linenodes_from_comp[linenode[0][1]].append(linenode)
+                else:
+                    assert linenode[0] in con.nodes
+                    if linenode[0] not in linenodes_from_comp:
+                        linenodes_from_comp[linenode[0]] = list()
+                    linenodes_from_comp[linenode[0]].append(linenode)
+                if type(linenode[1]) == tuple:
+                    assert linenode[1][1] in con.nodes
+                    if linenode[1][1] not in linenodes_from_comp:
+                        linenodes_from_comp[linenode[1][1]] = list()
+                    linenodes_from_comp[linenode[1][1]].append(linenode)
+                else:
+                    assert linenode[1] in con.nodes
+                    if linenode[1] not in linenodes_from_comp:
+                        linenodes_from_comp[linenode[1]] = list()
+                    linenodes_from_comp[linenode[1]].append(linenode)
+            # compute the component LPs and assign weight
+            for line in tuple(lg.edges):
+                comp = line[0][1]
+                assert comp == line[1][0]
+                if type(line[0][0]) == tuple:
+                    comp_start = present
+                else:
+                    comp_start = boundary_map[line[0]][1]
+                if type(line[1][1]) == tuple:
+                    comp_target = None
+                else:
+                    comp_target = boundary_map[line[1]][0]
+                line_weight = int(1e-6 + LP_master(nx.induced_subgraph(dg, node_map[comp]), 1, True, False, 1, cutsets=(internal_cuts[comp], [])[type(line[1][1])==tuple], start=comp_start, target=comp_target))
+                lg.add_edge(line[0], line[1], weight=line_weight)
+        # B&B trim
+        if settings["bbt"]:
+            changed = True
+            while changed:
+                changed = False
+                for comp in con.nodes:
+                    if comp == starting_comp:
+                        continue
+                    # compute an upper bound WITH the component
+                    ub_with : int
+                    entering_edges = set()
+                    for ce in con.in_edges(comp):
+                        entering_edges |= edge_map[ce]
+                    con_with = nx.induced_subgraph(con, {comp,}|set(nx.descendants(con, comp))|set(nx.ancestors(con, comp)))
+                    lg_with = lg.copy()
+                    dg_with = dg.copy()
+                    for comp1 in set(con.nodes)-set(con_with.nodes):
+                        dg_with.remove_nodes_from(node_map[comp1])
+                        lg_with.remove_nodes_from(linenodes_from_comp[comp1])
+                    # flat computation
+                    ub_with = past + int(1e-6 + LP_master(dg_with, 1, True, False, 1, cutsets=[entering_edges,], start=present))
+                    # decomposed computation: longest weighted path in lg_with
+                    longest_from : dict[int,int] = dict()
+                    decomp_max = 0
+                    for v in reversed(list(nx.topological_sort(lg_with))):
+                        longest_from[v] = max((longest_from[s]+lg_with.edges[(v,s)]['weight'] for s in lg_with.successors(v)), default=0)
+                        if type(v[0]) == tuple:
+                            assert v[0][0] == "start"
+                            decomp_max = max(decomp_max, longest_from[v])
+                    decomp_max += past
+                    #print("check component",comp,": flat =",ub_with,", decomp =",decomp_max)
+                    ub_with = min(ub_with, decomp_max)
+                    # attempt greedy solve WITHOUT the component
+                    lb_without = past + 1
+                    con_without = nx.induced_subgraph(con, nx.node_connected_component(nx.induced_subgraph(con, set(con.nodes)-{comp,}).to_undirected(reciprocal=False, as_view=True), starting_comp)).copy()
+                    #lg_without = lg.copy()
+                    dg_without : nx.DiGraph = dg.copy()
+                    for comp1 in set(con.nodes)-set(con_without.nodes):
+                        dg_without.remove_nodes_from(node_map[comp1])
+                        #lg_without.remove_nodes_from(linenodes_from_comp[comp1])
+                    start_without = present
+                    ub_without = past + int(1e-6 + LP_master(dg_without, 1, True, False, 1, start=start_without))
+                    while lb_without <= ub_with and ub_with < ub_without:
+                        ssu = set(dg_without.successors(start_without))
+                        if not ssu:
+                            break
+                        sud : dict[int,tuple[int,nx.DiGraph]] = dict()
+                        for succ in ssu:
+                            dgwo2 = nx.induced_subgraph(dg_without, nx.node_connected_component(nx.induced_subgraph(dg_without.to_undirected(reciprocal=False, as_view=True), {succ,}|(set(dg_without.nodes)-(ssu|{start_without,}))), succ))
+                            ubwo2 = lb_without + LP_master(dgwo2, 1, True, False, 1, start=succ)
+                            sud[succ] = (ubwo2, dgwo2.copy())
+                        #print(sud.keys(), lb_without, ub_with, ub_without)
+                        start_without = max(sud, key= lambda x : sud[x][0])
+                        lb_without += 1
+                        dg_without = sud[start_without][1]
+                        ub_without = int(1e-6 + sud[start_without][0])
+                    if lb_without > ub_with:
+                        # Mr. Trimmy McTrimTrim
+                        #print("trimmed these nodes:",*node_map[comp])
+                        con.remove_node(comp)
+                        dg.remove_nodes_from(node_map[comp])
+                        lg.remove_nodes_from(linenodes_from_comp[comp])
+                        changed = True
+                        break
         # upper bound
-        upper_bound : int
+        upper_bound : int = past
         # flat LP
-        upper_bound = past + int(1e-6 + LP_master(dg, 1, True, False, 1, start=present))
+        match settings["ub"]:
+            case "trivial":
+                if settings["dec"] == 0:
+                    upper_bound += len(wg)
+                else:
+                    upper_bound += len(dg)
+            case "ds":
+                if settings["dec"] == 0:
+                    upper_bound += deg_seq_ub(wg)
+                else:
+                    upper_bound += deg_seq_ub(dg.to_undirected())
+            case "fLP":
+                if settings["dec"] == 0:
+                    upper_bound += int(1e-6 + LP_master(wg, 0, True, False, 1, start=present))
+                else:
+                    upper_bound += int(1e-6 + LP_master(dg, 1, True, False, 1, start=present))
+            case "pLP":
+                upper_bound += int(1e-6 + LP_master(dg, 1, True, False, 1, start=present))
         # decomposed computation: longest weighted path in lg
-        longest_from : dict[int,int] = dict()
-        decomp_max = 0
-        for v in reversed(list(nx.topological_sort(lg))):
-            longest_from[v] = max((longest_from[s]+lg.edges[(v, s)]['weight'] for s in lg.successors(v)), default=0)
-            if type(v[0]) == tuple:
-                assert v[0][0] == "start"
-                decomp_max = max(decomp_max, longest_from[v])
-        decomp_max += past
-        #print("whole state - flat =",upper_bound,", decomp =",decomp_max)
-        upper_bound = min(upper_bound, decomp_max)
-        heappush(queue, (-((numinputnodes+1)*upper_bound+past), (past, present, int_from_set(dg.nodes), parent)))
+        if settings["dec"] > 0:
+            longest_from : dict[int,int] = dict()
+            decomp_max = 0
+            for v in reversed(list(nx.topological_sort(lg))):
+                longest_from[v] = max((longest_from[s]+lg.edges[(v, s)]['weight'] for s in lg.successors(v)), default=0)
+                if type(v[0]) == tuple:
+                    assert v[0][0] == "start"
+                    decomp_max = max(decomp_max, longest_from[v])
+            decomp_max += past
+            #print("whole state - flat =",upper_bound,", decomp =",decomp_max)
+            upper_bound = min(upper_bound, decomp_max)
+        # print(upper_bound, past)
+        if settings["ub"]=="pLP" or settings["dec"]>0:
+            heappush(queue, (-((numinputnodes+1)*upper_bound+past), (past, present, int_from_set(dg.nodes), parent)))
+        else:
+            heappush(queue, (-((numinputnodes+1)*upper_bound+past), (past, present, int_from_set(wg.nodes), parent)))
         return None
     solvetime = monotonic()
     searchnodes = 0
@@ -787,7 +825,7 @@ def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
         past,present,ifuture,parent = hp[1]
         assert (-hp[0])//(numinputnodes+1) >= past
         future = set_from_int(ifuture)
-        print((-hp[0])//(numinputnodes+1), past, present, "{", *future, "}")
+        #print((-hp[0])//(numinputnodes+1), past, present, "{", *future, "}")
         # check dominance
         if use_supercomp:
             status = domcomp[present].beatingSuperset(future, past)
@@ -869,7 +907,7 @@ def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
                     pathq.append(path[:-1] + [path[-1][0],] + [p,])
                 else:
                     path = path[:-1] + [path[-1][0],]
-                    assert len(path) == opt_length + 1
+                    assert len(path) == opt_length
                     path.reverse()
                     out.append(tuple(path))
         out = list(tuple(reversed(tuple(inputnodenames[i] for i in p))) for p in out)
@@ -877,6 +915,7 @@ def solve(inputgraph : nx.Graph, settings = dict(), inputstart = None):
     return out, searchnodes, solvetime
 
 karate_paths = [('12', '3', '2', '28', '31', '25', '23', '29', '26'), ('16', '5', '0', '1', '30', '32', '23', '25', '24'), ('16', '5', '0', '1', '30', '32', '23', '27', '24'), ('16', '5', '0', '1', '30', '33', '23', '25', '24'), ('16', '5', '0', '1', '30', '33', '27', '24', '25'), ('16', '5', '0', '2', '28', '33', '23', '25', '24'), ('16', '5', '0', '2', '9', '33', '23', '25', '24'), ('16', '5', '0', '31', '24', '27', '23', '29', '26'), ('16', '6', '0', '1', '30', '32', '23', '25', '24'), ('16', '6', '0', '1', '30', '32', '23', '27', '24'), ('16', '6', '0', '1', '30', '33', '23', '25', '24'), ('16', '6', '0', '1', '30', '33', '27', '24', '25'), ('16', '6', '0', '2', '28', '33', '23', '25', '24'), ('16', '6', '0', '2', '9', '33', '23', '25', '24'), ('16', '6', '0', '31', '24', '27', '23', '29', '26'), ('17', '1', '2', '28', '31', '25', '23', '29', '26'), ('19', '1', '2', '28', '31', '25', '23', '29', '26'), ('21', '1', '2', '28', '31', '25', '23', '29', '26'), ('24', '25', '23', '32', '30', '1', '0', '5', '16'), ('24', '25', '23', '32', '30', '1', '0', '6', '16'), ('24', '25', '23', '33', '28', '2', '0', '5', '16'), ('24', '25', '23', '33', '28', '2', '0', '6', '16'), ('24', '25', '23', '33', '30', '1', '0', '5', '16'), ('24', '25', '23', '33', '30', '1', '0', '6', '16'), ('24', '25', '23', '33', '9', '2', '0', '5', '16'), ('24', '25', '23', '33', '9', '2', '0', '6', '16'), ('24', '27', '23', '32', '30', '1', '0', '5', '16'), ('24', '27', '23', '32', '30', '1', '0', '6', '16'), ('25', '24', '27', '33', '30', '1', '0', '5', '16'), ('25', '24', '27', '33', '30', '1', '0', '6', '16'), ('26', '29', '23', '25', '31', '28', '2', '1', '17'), ('26', '29', '23', '25', '31', '28', '2', '1', '19'), ('26', '29', '23', '25', '31', '28', '2', '1', '21'), ('26', '29', '23', '25', '31', '28', '2', '1', '30'), ('26', '29', '23', '25', '31', '28', '2', '3', '12'), ('26', '29', '23', '25', '31', '28', '2', '8', '30'), ('26', '29', '23', '27', '24', '31', '0', '1', '30'), ('26', '29', '23', '27', '24', '31', '0', '5', '16'), ('26', '29', '23', '27', '24', '31', '0', '6', '16'), ('26', '29', '23', '27', '24', '31', '0', '8', '30'), ('30', '1', '0', '31', '24', '27', '23', '29', '26'), ('30', '1', '2', '28', '31', '25', '23', '29', '26'), ('30', '8', '0', '31', '24', '27', '23', '29', '26'), ('30', '8', '2', '28', '31', '25', '23', '29', '26')]
-#res = solve(nx.read_graphml("graphs/lip_crn/karate.graphml"), settings={"iso":1, "supercomp":1})
-#assert res[0] == karate_paths
-#print(res[1], res[2])
+res = solve(nx.read_graphml("graphs/lip_crn/karate.graphml"), settings={"iso":1, "sup":1, "bbt":0, "dec":0, "ub":"pLP"})
+assert res[0] == karate_paths
+print(res[1], res[2])
+
