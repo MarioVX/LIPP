@@ -454,8 +454,12 @@ def deg_seq_ub(graph:nx.Graph) -> int:
     while ds and ds[-1] == 0:
         ds.pop()
     used_nodes = 0
-    while ds and ds[-1] == 1 and used_nodes < 2:
-        used_nodes += 1
+    reserved_ones = 0
+    while ds and ds[-1] == 1:
+        if used_nodes < 2:
+            used_nodes += 1
+        else:
+            reserved_ones += 1
         ds.pop()
     while ds and ds[-1] == 2:
         used_nodes += 1
