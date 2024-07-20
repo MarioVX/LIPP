@@ -44,4 +44,3 @@ with open('experiment_'+exp_name+'_'+datetime.now().strftime('%Y%m%d%H%M%S')+'.c
             else:
                 line += [1, len(res[0][0]), res[1], res[2]]
             writer.writerow(line)
-            input()
