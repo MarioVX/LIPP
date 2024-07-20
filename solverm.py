@@ -482,6 +482,9 @@ def deg_seq_ub(graph:nx.Graph) -> int:
     assert False
 
 def solve(inputgraph : nx.Graph, settings, timeout = 1200, inputstart = None):
+    """
+    
+    """
     assert "sup" in settings
     use_supercomp = settings["sup"]
     assert "iso" in settings
