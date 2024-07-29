@@ -815,8 +815,8 @@ def solve(inputgraph : nx.Graph, settings, timeout = 1200, inputstart = None):
     for i in range(numinputnodes):
         idstruct.append(dict())
     if iso_upto:
-        if not pynauty_imported:
-            import pynauty
+        #if not pynauty_imported:
+        #    import pynauty
         isostruct : dict[bytes,tuple[int,list[tuple[int]]]] = dict()
         def iso_backprop(present : int, ifuture : int, paths : bool) -> set[tuple[int,int]]|list[tuple[int]]:
             """
