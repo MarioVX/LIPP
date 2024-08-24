@@ -2,6 +2,7 @@ import solverm
 import csv
 import os
 from datetime import datetime
+import networkx as nx
 
 settings = {"iso":0, "sup":0, "ub":"ds", "dec":0, "bbt":0, "bbt_with_ub":"ds", "bbt_without_ub":"ds"}
 graph_dir_name = 'graphs/lip_crn'
