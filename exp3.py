@@ -8,7 +8,7 @@ graph_dir_name = 'graphs/lip_crn'
 
 with open('experiment_' + datetime.now().strftime('%H%M%S') + '.csv', 'w', newline='') as resultfile:
     writer = csv.writer(resultfile)
-    write.writerow(['name','success', 'prio/length', 'searchnodes', 'time'])
+    writer.writerow(['name','success', 'prio/length', 'searchnodes', 'time'])
     for graphfile in os.listdir(graph_dir_name):
         g = nx.read_graphml(graph_dir_name + "/" + str(graphfile))
         res = solverm.solve(g, settings)
